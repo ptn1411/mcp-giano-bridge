@@ -7,14 +7,7 @@ import { z } from "zod";
 type TaskPayloadV2 = {
   version: "v2";
   taskId: string;
-  title?: string;
   goal: string;
-  acceptanceCriteria?: string[];
-  steps?: string[];
-  repoPath?: string;
-  files?: string[];
-  commandsAllowed?: string[];
-  notes?: string;
 };
 
 type TaskItem = {
@@ -60,139 +53,18 @@ const inFlight = new Map<string, TaskItem>();
 const processedIds = new Set<string>();
 const MAX_PROCESSED_IDS = 500;
 
-function normalizeTaskText(raw: string) {
-  return (raw ?? "").trim();
-}
-
-function stripTaskPrefix(text: string) {
-  // Allow users to start tasks with "/task" and keep the rest as content.
-  return text.replace(/^\s*\/task\s*/i, "").trim();
-}
-
-function tryParseJson(text: string): any | null {
-  try {
-    const obj = JSON.parse(text);
-    return obj;
-  } catch {
-    return null;
-  }
-}
-
-function parseKeyValueLines(text: string): Record<string, any> {
-  // Very small YAML-ish parser:
-  // key: value
-  // steps:
-  // - a
-  // - b
-  const lines = text.split(/\r?\n/);
-  const out: Record<string, any> = {};
-
-  let currentListKey: string | null = null;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
-
-    const listItem = line.match(/^[-*]\s+(.*)$/);
-    if (listItem && currentListKey) {
-      out[currentListKey] = out[currentListKey] ?? [];
-      if (Array.isArray(out[currentListKey])) {
-        out[currentListKey].push(listItem[1]);
-      }
-      continue;
-    }
-
-    const kv = line.match(/^([A-Za-z0-9_\-]+)\s*:\s*(.*)$/);
-    if (kv) {
-      const key = kv[1];
-      const value = kv[2];
-
-      if (value === "") {
-        // start list mode
-        currentListKey = key;
-        out[key] = out[key] ?? [];
-      } else {
-        currentListKey = null;
-        out[key] = value;
-      }
-    } else {
-      currentListKey = null;
-    }
-  }
-
-  return out;
-}
-
-function parseTaskPayloadV2(
-  rawText: string,
-  fallbackUpdateId: string,
-): TaskPayloadV2 {
-  const normalized = normalizeTaskText(rawText);
-  const stripped = stripTaskPrefix(normalized);
-
-  const json = tryParseJson(stripped);
-  const kv = json ? null : parseKeyValueLines(stripped);
-
-  const taskId: string =
-    (json?.taskId ??
-      json?.task_id ??
-      kv?.taskId ??
-      kv?.task_id ??
-      kv?.id ??
-      null) ||
-    fallbackUpdateId;
-
-  const goal: string =
-    (json?.goal ?? kv?.goal ?? json?.text ?? kv?.text ?? stripped) ||
-    stripped ||
-    "(empty)";
-
-  const title: string | undefined = json?.title ?? kv?.title;
-
-  const toList = (v: any): string[] | undefined => {
-    if (!v) return undefined;
-    if (Array.isArray(v)) return v.map(String);
-    if (typeof v === "string")
-      return v
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-    return undefined;
-  };
-
+function buildPayload(rawText: string, fallbackId: string): TaskPayloadV2 {
   return {
     version: "v2",
-    taskId: String(taskId),
-    title: title ? String(title) : undefined,
-    goal: String(goal).trim(),
-    acceptanceCriteria: toList(
-      json?.acceptanceCriteria ??
-        json?.dod ??
-        kv?.acceptanceCriteria ??
-        kv?.dod,
-    ),
-    steps: toList(json?.steps ?? kv?.steps),
-    repoPath:
-      (json?.repoPath ?? json?.repo_path ?? kv?.repoPath ?? kv?.repo_path)
-        ? String(
-            json?.repoPath ?? json?.repo_path ?? kv?.repoPath ?? kv?.repo_path,
-          )
-        : undefined,
-    files: toList(json?.files ?? kv?.files),
-    commandsAllowed: toList(
-      json?.commandsAllowed ??
-        json?.commands_allowed ??
-        kv?.commandsAllowed ??
-        kv?.commands_allowed,
-    ),
-    notes:
-      (json?.notes ?? kv?.notes) ? String(json?.notes ?? kv?.notes) : undefined,
+    taskId: fallbackId,
+    goal: rawText.trim() || "(empty)",
   };
 }
 
 function ctxToTask(ctx: any): TaskItem {
-  const rawText = normalizeTaskText(ctx.text ?? "");
+  const rawText = (ctx.text ?? "").trim();
   const updateId = String(ctx.updateId);
-  const payload = parseTaskPayloadV2(rawText, updateId);
+  const payload = buildPayload(rawText, updateId);
 
   return {
     taskId: payload.taskId,
@@ -242,23 +114,8 @@ async function startBot() {
       if (first) processedIds.delete(first);
     }
 
-    // Heuristic: determine if this looks like a structured task
-    const isLikelyTask =
-      task.rawText.startsWith("/task") ||
-      task.rawText.startsWith("TASK") ||
-      /taskId\s*[:=]/i.test(task.rawText) ||
-      task.rawText.trim().startsWith("{");
-
-    // Push EVERYTHING to the queue to allow conversation/agentic chatter.
+    // Push everything to the queue — let the agent decide how to handle it.
     queue.push(task);
-
-    // Optional immediate ACK back to Giano chat - ONLY for explicit tasks to avoid spamming "Hello"
-    const autoAck = (process.env.GIANO_AUTO_ACK ?? "false") === "true";
-    if (autoAck && isLikelyTask) {
-      await ctx.reply(
-        `✅ Task received (taskId=${task.taskId}).\nGoal: ${task.payload.goal.slice(0, 200)}${task.payload.goal.length > 200 ? "…" : ""}`,
-      );
-    }
   });
 
   bot.on("error", (err) => {
@@ -325,14 +182,24 @@ server.tool(
   {
     taskId: z.string(),
     message: z.string().default("🟦 Agent started."),
+    parseMode: z.enum(["markdown", "html"]).optional(),
+    silent: z
+      .boolean()
+      .default(false)
+      .describe(
+        "If true, skip sending a visible chat message (still tracks internally).",
+      ),
   },
-  async ({ taskId, message }) => {
+  async ({ taskId, message, parseMode, silent }) => {
     const task = inFlight.get(taskId);
     if (!task) throw new Error(`Unknown taskId: ${taskId}`);
 
-    await botGlobal.sendMessage(task.chatId, message, {
-      replyToId: task.replyToId,
-    });
+    if (!silent) {
+      await botGlobal.sendMessage(task.chatId, message, {
+        replyToId: task.replyToId,
+        parseMode,
+      });
+    }
 
     return { content: [{ type: "text", text: "OK" }] };
   },
@@ -346,8 +213,9 @@ server.tool(
     message: z.string(),
     percent: z.number().int().min(0).max(100).optional(),
     phase: z.string().optional(),
+    parseMode: z.enum(["markdown", "html"]).optional(),
   },
-  async ({ taskId, message, percent, phase }) => {
+  async ({ taskId, message, percent, phase, parseMode }) => {
     const task = inFlight.get(taskId);
     if (!task) throw new Error(`Unknown taskId: ${taskId}`);
 
@@ -361,6 +229,7 @@ server.tool(
 
     await botGlobal.sendMessage(task.chatId, prefix + message, {
       replyToId: task.replyToId,
+      parseMode,
     });
 
     return { content: [{ type: "text", text: "OK" }] };
@@ -376,33 +245,51 @@ server.tool(
     summary: z.string(),
     filesTouched: z.array(z.string()).optional(),
     verify: z.array(z.string()).optional(),
+    parseMode: z.enum(["markdown", "html"]).optional(),
+    silent: z
+      .boolean()
+      .default(false)
+      .describe(
+        "If true, skip sending a visible chat message (still cleans up internal state).",
+      ),
   },
-  async ({ taskId, status, summary, filesTouched, verify }) => {
+  async ({
+    taskId,
+    status,
+    summary,
+    filesTouched,
+    verify,
+    parseMode,
+    silent,
+  }) => {
     const task = inFlight.get(taskId);
     if (!task) throw new Error(`Unknown taskId: ${taskId}`);
 
     inFlight.delete(taskId);
 
-    const lines: string[] = [summary.trim()];
-    if (filesTouched?.length) {
-      lines.push("", "Files:", ...filesTouched.map((f) => `- ${f}`));
+    if (!silent) {
+      const lines: string[] = [summary.trim()];
+      if (filesTouched?.length) {
+        lines.push("", "Files:", ...filesTouched.map((f) => `- ${f}`));
+      }
+      if (verify?.length) {
+        lines.push("", "Verify:", ...verify.map((c) => `- ${c}`));
+      }
+
+      const body = lines.join("\n").trim();
+
+      const text =
+        status === "success"
+          ? `✅ Done (taskId=${taskId})\n${body}`
+          : status === "blocked"
+            ? `🟨 Blocked (taskId=${taskId})\n${body}`
+            : `❌ Failed (taskId=${taskId})\n${body}`;
+
+      await botGlobal.sendMessage(task.chatId, text, {
+        replyToId: task.replyToId,
+        parseMode,
+      });
     }
-    if (verify?.length) {
-      lines.push("", "Verify:", ...verify.map((c) => `- ${c}`));
-    }
-
-    const body = lines.join("\n").trim();
-
-    const text =
-      status === "success"
-        ? `✅ Done (taskId=${taskId})\n${body}`
-        : status === "blocked"
-          ? `🟨 Blocked (taskId=${taskId})\n${body}`
-          : `❌ Failed (taskId=${taskId})\n${body}`;
-
-    await botGlobal.sendMessage(task.chatId, text, {
-      replyToId: task.replyToId,
-    });
 
     return { content: [{ type: "text", text: "OK" }] };
   },
@@ -526,45 +413,6 @@ server.resource("queue", "giano://queue", async (uri) => {
     ],
   };
 });
-
-server.prompt(
-  "giano-worker",
-  "Auto-worker mode: poll for tasks and execute them.",
-  {
-    style: z.enum(["concise", "detailed"]).optional(),
-  },
-  async ({ style }) => {
-    return {
-      messages: [
-        {
-          role: "user",
-          content: {
-            type: "text",
-            text: `You are an automated Giano Worker Agent.
-Your job is to check the Giano task queue and execute tasks.
-
-Cycle:
-1.  Check 'giano://queue' resource to see if tasks are waiting (optional, validation).
-2.  Call 'giano_task_pull' to get the next task.
-3.  If a task is returned:
-    a.  Call 'giano_task_ack' to confirm.
-    b.  Read the task goal.
-    c.  If it's a conversation (e.g. "Hello"), reply using 'giano_send_message' and then mark complete.
-    d.  If asked to send a photo or file, use 'giano_send_photo' or 'giano_send_file'.
-    e.  If it's a work task, perform the necessary steps (read files, run commands, write code).
-    f.  Use 'giano_task_progress' for long-running tasks.
-    g.  When finished, call 'giano_task_complete'.
-
-4.  If no task is returned, you can stop or wait.
-
-Be helpful and efficient.
-Style: ${style ?? "concise"}`,
-          },
-        },
-      ],
-    };
-  },
-);
 
 let botGlobal: Bot;
 

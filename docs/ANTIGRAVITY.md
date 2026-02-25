@@ -5,7 +5,7 @@ Antigravity supports MCP and can run a local MCP server via a command.
 ## 1) Build the MCP server
 
 ```bash
-cd /root/clawd/giano/mcp-giano-bridge
+cd mcp-giano-bridge
 npm install
 npm run build
 ```
@@ -59,8 +59,7 @@ Thêm entry `"giano"` vào trong key `"mcpServers"`:
       "env": {
         "GIANO_BOT_TOKEN": "YOUR_BOT_TOKEN",
         "GIANO_API_BASE_URL": "https://messages-api.bug.edu.vn",
-        "GIANO_WS_URL": "wss://messages-api.bug.edu.vn/bot/ws",
-        "GIANO_AUTO_ACK": "true"
+        "GIANO_WS_URL": "wss://messages-api.bug.edu.vn/bot/ws"
       }
     }
   }
@@ -93,13 +92,13 @@ Nếu trả về `{"queued": 0, "inFlight": 0, "version": "0.2.0"}` → thành c
 
 1. **Auto-Worker Mode**: Use the `giano-worker` prompt to let the agent autonomously poll and execute tasks.
 2. **Manual Conversation**:
-   - The bridge now queues **all messages** from the bot, not just tasks.
+   - The bridge queues **all messages** from the bot.
    - Use `giano_send_message` to talk back to the user.
    - Use `giano_task_complete` to finish a task.
 
 ## Troubleshooting
 
-### Bot doesn’t receive tasks
+### Bot doesn't receive messages
 
 - Verify `GIANO_BOT_TOKEN` is correct
 - Verify bot is active and subscribed to the chat
@@ -109,9 +108,21 @@ Nếu trả về `{"queued": 0, "inFlight": 0, "version": "0.2.0"}` → thành c
 
 Backend is running an older build. Rebuild/restart backend.
 
-### Tasks are ignored
+### Messages not appearing in queue
 
-_Update v0.2.0_: All messages are now queued. If you don't see them, check:
+- Use `giano_queue_stats` to check if queue is empty.
+- Ensure the agent is polling with `giano_task_pull`.
 
-- `giano_queue_stats` to see if queue is empty.
-- `GIANO_AUTO_ACK` is only sent for messages starting with `/task` or having a payload, to avoid spamming normal chat.
+# Trong mỗi project, tạo symlink tới file gốc
+
+```
+New-Item -ItemType SymbolicLink `
+  -Path ".agents\workflows\giano-worker.md" `
+  -Target "C:\Users\NAM\Code\web\mcp-giano-bridge\.agents\workflows\giano-worker.md"
+```
+
+# Tạo symlink cho MCP server
+```
+New-Item -ItemType SymbolicLink `  -Path ".agents\mcp\giano.json"`
+-Target "C:\Users\NAM\Code\web\mcp-giano-bridge\.agents\mcp\giano.json"
+```

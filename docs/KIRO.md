@@ -64,21 +64,26 @@ The Power also includes:
 ## Where Kiro stores MCP config
 
 Workspace-level:
+
 - `.kiro/settings/mcp.json`
 
 User-level:
+
 - `~/.kiro/settings/mcp.json`
 
 Powers merged config:
+
 - `~/.kiro/powers.mcp.json`
 
 ## Troubleshooting
 
 ### Power installs but MCP tools not available
+
 - Ensure the Power is **Installed** and **Active**
 - Ensure env vars exist in the environment where Kiro runs
 - Open `~/.kiro/powers.mcp.json` and confirm the `giano` server exists
 
-### Bridge runs but no tasks appear
-- Use `/task ...` format when sending tasks to the bot chat
+### Bridge runs but no messages appear
+
+- Just send a message naturally to the bot chat
 - Confirm bot is subscribed to that chat

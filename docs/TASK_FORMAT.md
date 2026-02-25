@@ -1,68 +1,24 @@
 # Task format (v0.2)
 
-The bridge accepts tasks posted to the Giano bot chat in several formats.
+The bridge accepts **any message** sent to the Giano bot chat. No special format required.
 
-## A) Quick /task (minimal)
+## How it works
 
-```text
-/task Fix bug in refresh token flow. DoD: tests pass.
-```
-
-Bridge will produce a v2 payload with:
-
-- `goal` = message text (without `/task`)
-- `taskId` = `updateId` (unless you explicitly provide a taskId)
-
-## B) YAML-ish key/value (recommended for humans)
+Just chat naturally with the bot:
 
 ```text
-taskId: auth-rot-001
-title: Refresh token rotation
-goal: Implement refresh token rotation in backend
-repoPath: /root/clawd/giano
-dod:
-- tests pass
-- no breaking change
-steps:
-- Inspect current refresh implementation
-- Implement rotation
-- Add tests
-files:
-- backend/src/services/auth.rs
-commandsAllowed:
-- cargo test
-- cargo run
-notes: Focus on security + invalidate old tokens.
+Fix bug in the refresh token flow
 ```
-
-## C) JSON (recommended for machines)
-
-```json
-{
-  "taskId": "auth-rot-001",
-  "title": "Refresh token rotation",
-  "goal": "Implement refresh token rotation in backend",
-  "repoPath": "/root/clawd/giano",
-  "acceptanceCriteria": ["tests pass", "no breaking change"],
-  "steps": ["..."],
-  "files": ["backend/src/services/auth.rs"],
-  "commandsAllowed": ["cargo test"],
-  "notes": "Focus on security"
-}
-```
-
-## D) Natural Language (Conversational)
-
-You can simply chat with the bot. The bridge queues all messages.
 
 ```text
-@bot please check existing tests for the auth module
+Refactor the login page to use the new design system
 ```
 
-The bridge will produce a task with:
+```text
+Check why the build is failing and fix it
+```
 
-- `goal` = the full message text
-- `taskId` = `updateId`
+The bridge wraps every message into a v2 payload and queues it for the agent. The agent reads `rawText` (your original message) and `goal` (same content, trimmed) and decides what to do.
 
 ## Output schema
 
@@ -81,16 +37,13 @@ The bridge will produce a task with:
     "payload": {
       "version": "v2",
       "taskId": "...",
-      "title": "...",
-      "goal": "...",
-      "acceptanceCriteria": [],
-      "steps": [],
-      "repoPath": "...",
-      "files": [],
-      "commandsAllowed": [],
-      "notes": "..."
+      "goal": "..."
     },
     "rawText": "..."
   }
 }
 ```
+
+- `taskId` = auto-generated from the message update ID
+- `goal` = your message text (trimmed)
+- `rawText` = your original message text
